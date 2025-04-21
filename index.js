@@ -1,6 +1,8 @@
-require('dotenv').config();
-const fs = require('fs');
 const { Client, GatewayIntentBits, Partials, PermissionsBitField } = require('discord.js');
+const fs = require('fs');
+const express = require('express');
+const app = express();
+require('dotenv').config();
 
 const client = new Client({
   intents: [
@@ -8,166 +10,132 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessageReactions
   ],
-  partials: [Partials.Message, Partials.Channel, Partials.Reaction]
+  partials: [Partials.Channel]
 });
 
+const PREFIX = '?';
 let snipe = null;
-let economy = {};
+let money = {};
 
-const ECONOMY_FILE = 'economy.json';
-
-// Charger économie si existe
-if (fs.existsSync(ECONOMY_FILE)) {
-  economy = JSON.parse(fs.readFileSync(ECONOMY_FILE, 'utf-8'));
+if (fs.existsSync('./money.json')) {
+  money = JSON.parse(fs.readFileSync('./money.json'));
 }
-
-function saveEconomy() {
-  fs.writeFileSync(ECONOMY_FILE, JSON.stringify(economy, null, 2));
-}
-
-client.once('ready', () => {
-  console.log(`Connecté en tant que ${client.user.tag}`);
-});
 
 client.on('messageDelete', (msg) => {
-  if (!msg.author?.bot) {
-    snipe = msg;
-  }
+  snipe = msg;
 });
 
 client.on('messageCreate', async (message) => {
-  if (!message.guild || message.author.bot) return;
+  if (!message.content.startsWith(PREFIX) || message.author.bot) return;
 
-  const args = message.content.slice(1).trim().split(/ +/);
-  const cmd = args.shift()?.toLowerCase();
+  const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+  const cmd = args.shift().toLowerCase();
 
-  const member = message.member;
-
-  // Lock / Unlock
+  // LOCK / UNLOCK
   if (cmd === 'lock') {
-    if (!member.permissions.has(PermissionsBitField.Flags.ManageChannels)) return;
-    await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
-      SendMessages: false
-    });
-    message.channel.send('Salon verrouillé.');
+    message.channel.permissionOverwrites.edit(message.guild.id, { SendMessages: false });
+    message.reply('Salon verrouillé.');
+  } else if (cmd === 'unlock') {
+    message.channel.permissionOverwrites.edit(message.guild.id, { SendMessages: true });
+    message.reply('Salon déverrouillé.');
   }
 
-  if (cmd === 'unlock') {
-    if (!member.permissions.has(PermissionsBitField.Flags.ManageChannels)) return;
-    await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
-      SendMessages: true
-    });
-    message.channel.send('Salon déverrouillé.');
-  }
-
-  // Ban / Déban
-  if (cmd === 'ban') {
-    if (!member.permissions.has(PermissionsBitField.Flags.BanMembers)) return;
+  // BAN / DBAN / KICK
+  else if (cmd === 'ban') {
     const user = message.mentions.members.first();
-    if (!user) return message.reply('Mentionne un membre.');
-    await user.ban();
-    message.channel.send(`${user.user.tag} banni.`);
-  }
-
-  if (cmd === 'dban') {
-    if (!member.permissions.has(PermissionsBitField.Flags.BanMembers)) return;
-    const userId = args[0];
-    if (!userId) return message.reply('Donne l’ID.');
-    await message.guild.bans.remove(userId);
-    message.channel.send(`Débanni ${userId}`);
-  }
-
-  // Kick
-  if (cmd === 'kick') {
-    if (!member.permissions.has(PermissionsBitField.Flags.KickMembers)) return;
+    if (!user) return message.reply('Mentionne un utilisateur.');
+    user.ban().then(() => message.reply(`${user.user.tag} a été banni.`));
+  } else if (cmd === 'dban') {
+    const userID = args[0];
+    if (!userID) return message.reply('Donne un ID.');
+    message.guild.members.unban(userID).then(() => message.reply(`ID ${userID} débanni.`));
+  } else if (cmd === 'kick') {
     const user = message.mentions.members.first();
-    if (!user) return message.reply('Mentionne un membre.');
-    await user.kick();
-    message.channel.send(`${user.user.tag} kické.`);
+    if (!user) return message.reply('Mentionne un utilisateur.');
+    user.kick().then(() => message.reply(`${user.user.tag} a été kick.`));
   }
 
-  // Snipe
-  if (cmd === 'snipe') {
-    if (!snipe) return message.channel.send('Rien à snip.');
-    message.channel.send(`Dernier message supprimé : ${snipe.content} - par ${snipe.author.tag}`);
+  // MUTE / DMUTE
+  else if (cmd === 'mute') {
+    const member = message.mentions.members.first();
+    if (!member) return message.reply('Mentionne un utilisateur.');
+    const role = message.guild.roles.cache.find(r => r.name === 'muted') ||
+      await message.guild.roles.create({ name: 'muted', permissions: [] });
+    message.guild.channels.cache.forEach(c => c.permissionOverwrites.edit(role, { SendMessages: false }));
+    member.roles.add(role);
+    message.reply(`${member.user.tag} est muté pour 1h.`);
+    setTimeout(() => member.roles.remove(role), 3600000);
+  } else if (cmd === 'dmute') {
+    const member = message.mentions.members.first();
+    if (!member) return message.reply('Mentionne un utilisateur.');
+    const role = message.guild.roles.cache.find(r => r.name === 'muted');
+    if (role) member.roles.remove(role);
+    message.reply(`${member.user.tag} n'est plus muet.`);
   }
 
-  // Annonce
-  if (cmd === 'annonce') {
+  // SNIPE
+  else if (cmd === 'snipe') {
+    if (!snipe) return message.reply('Aucun message supprimé.');
+    message.channel.send(`Dernier message supprimé :\n**${snipe.author.tag}**: ${snipe.content}`);
+  }
+
+  // ANNONCE
+  else if (cmd === 'annonce') {
     const text = args.join(' ');
-    if (!text) return message.reply('Écris ton annonce.');
-    message.delete();
+    if (!text) return message.reply('Tu dois écrire un message.');
     message.channel.send(text);
   }
 
-  // Mute / Demute
-  if (cmd === 'mute') {
-    if (!member.permissions.has(PermissionsBitField.Flags.MuteMembers)) return;
-    const user = message.mentions.members.first();
-    if (!user) return message.reply('Mentionne un membre.');
-    await user.timeout(60 * 60 * 1000); // 1h
-    message.channel.send(`${user.user.tag} mute 1h`);
-  }
-
-  if (cmd === 'dmute') {
-    if (!member.permissions.has(PermissionsBitField.Flags.MuteMembers)) return;
-    const user = message.mentions.members.first();
-    if (!user) return message.reply('Mentionne un membre.');
-    await user.timeout(null); // Démute
-    message.channel.send(`${user.user.tag} démuté.`);
-  }
-
-  // Role ajouter / enlever
-  if (cmd === 'role') {
-    const action = args[0];
+  // ROLE AJOUTER / ENLEVER
+  else if (cmd === 'role' && args[0] === 'ajouter') {
     const user = message.mentions.members.first();
     const roleName = args.slice(2).join(' ');
     const role = message.guild.roles.cache.find(r => r.name === roleName);
-
-    if (!member.permissions.has(PermissionsBitField.Flags.ManageRoles)) return;
-    if (!user || !role) return message.reply('Utilisation: ?role ajouter/enlever @user NomDuRole');
-
-    if (action === 'ajouter') {
-      await user.roles.add(role);
-      message.channel.send(`Rôle ajouté à ${user.user.tag}`);
-    } else if (action === 'enlever') {
-      await user.roles.remove(role);
-      message.channel.send(`Rôle retiré à ${user.user.tag}`);
-    } else {
-      message.reply('Utilise ajouter ou enlever.');
+    if (user && role) {
+      user.roles.add(role);
+      message.reply(`Rôle ${roleName} ajouté à ${user.user.tag}.`);
+    }
+  } else if (cmd === 'role' && args[0] === 'enlever') {
+    const user = message.mentions.members.first();
+    const roleName = args.slice(2).join(' ');
+    const role = message.guild.roles.cache.find(r => r.name === roleName);
+    if (user && role) {
+      user.roles.remove(role);
+      message.reply(`Rôle ${roleName} retiré à ${user.user.tag}.`);
     }
   }
 
-  // Économie : afficher / ajouter / enlever
-  const target = message.mentions.users.first() || message.author;
-  const userId = target.id;
-  economy[userId] = economy[userId] || 0;
-
-  if (cmd === 'argent') {
-    message.channel.send(`${target.username} a ${economy[userId]}€`);
-  }
-
-  if (cmd === 'argent' && args[0] === 'ajouter') {
-    if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
-    const amount = parseInt(args[2]);
-    if (!args[1] || isNaN(amount)) return message.reply('Utilise: ?argent ajouter @user montant');
+  // ARGENT
+  else if (cmd === 'argent') {
+    const target = message.mentions.users.first() || message.author;
+    if (!money[target.id]) money[target.id] = 0;
+    message.reply(`${target.username} a ${money[target.id]}€.`);
+  } else if (cmd === 'argent' && args[0] === 'ajouter') {
     const user = message.mentions.users.first();
-    economy[user.id] = (economy[user.id] || 0) + amount;
-    saveEconomy();
-    message.channel.send(`${amount}€ ajouté à ${user.username}`);
-  }
-
-  if (cmd === 'argent' && args[0] === 'enlever') {
-    if (!member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
     const amount = parseInt(args[2]);
-    if (!args[1] || isNaN(amount)) return message.reply('Utilise: ?argent enlever @user montant');
+    if (user && !isNaN(amount)) {
+      money[user.id] = (money[user.id] || 0) + amount;
+      fs.writeFileSync('./money.json', JSON.stringify(money));
+      message.reply(`${amount}€ ajoutés à ${user.username}.`);
+    }
+  } else if (cmd === 'argent' && args[0] === 'enlever') {
     const user = message.mentions.users.first();
-    economy[user.id] = Math.max(0, (economy[user.id] || 0) - amount);
-    saveEconomy();
-    message.channel.send(`${amount}€ retiré à ${user.username}`);
+    const amount = parseInt(args[2]);
+    if (user && !isNaN(amount)) {
+      money[user.id] = (money[user.id] || 0) - amount;
+      fs.writeFileSync('./money.json', JSON.stringify(money));
+      message.reply(`${amount}€ retirés à ${user.username}.`);
+    }
   }
 });
 
 client.login(process.env.TOKEN);
+
+// === KEEP ALIVE SERVER (pour Render Web Service) ===
+app.get('/', (req, res) => {
+  res.send('Bot is running!');
+});
+app.listen(process.env.PORT || 3000, () => {
+  console.log('Keep-alive Express server running.');
+});

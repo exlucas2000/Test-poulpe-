@@ -17,6 +17,7 @@ app.listen(3000, () => {
 const PREFIX = '+'; // Ton préfixe
 let money = {}; // Système d'argent simple
 let snipe = null; // Pour la commande snipe
+const lastErrors = {}; // Garder une trace des erreurs récentes
 
 // === SETUP CLIENT DISCORD ===
 const client = new Client({
@@ -51,40 +52,48 @@ client.on('messageCreate', async (message) => {
 
   const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator) || message.member.permissions.has(PermissionsBitField.Flags.ManageGuild);
 
+  // Fonction pour gérer les erreurs de manière unique
+  const sendErrorOnce = (errorMessage) => {
+    if (!lastErrors[message.author.id] || Date.now() - lastErrors[message.author.id] > 5000) {
+      message.reply(errorMessage);
+      lastErrors[message.author.id] = Date.now();
+    }
+  };
+
   // LOCK / UNLOCK
   if (cmd === 'lock') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     await message.channel.permissionOverwrites.edit(message.guild.id, { SendMessages: false });
     message.reply('Salon verrouillé. Les membres ne peuvent plus parler.');
   } else if (cmd === 'unlock') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     await message.channel.permissionOverwrites.edit(message.guild.id, { SendMessages: true });
     message.reply('Salon déverrouillé. Les membres peuvent reparler.');
   }
 
   // BAN / DBAN / KICK
   else if (cmd === 'ban') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     const user = message.mentions.members.first();
-    if (!user) return message.reply('Mentionne un utilisateur.');
+    if (!user) return sendErrorOnce('Mentionne un utilisateur.');
     user.ban().then(() => message.reply(`${user.user.tag} a été banni.`));
   } else if (cmd === 'dban') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     const userID = args[0];
-    if (!userID) return message.reply('Donne un ID.');
+    if (!userID) return sendErrorOnce('Donne un ID.');
     message.guild.members.unban(userID).then(() => message.reply(`ID ${userID} débanni.`));
   } else if (cmd === 'kick') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     const user = message.mentions.members.first();
-    if (!user) return message.reply('Mentionne un utilisateur.');
+    if (!user) return sendErrorOnce('Mentionne un utilisateur.');
     user.kick().then(() => message.reply(`${user.user.tag} a été kick.`));
   }
 
   // MUTE / DMUTE
   else if (cmd === 'mute') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     const member = message.mentions.members.first();
-    if (!member) return message.reply('Mentionne un utilisateur.');
+    if (!member) return sendErrorOnce('Mentionne un utilisateur.');
     const role = message.guild.roles.cache.find(r => r.name === 'muted') ||
       await message.guild.roles.create({ name: 'muted', permissions: [] });
     message.guild.channels.cache.forEach(c => c.permissionOverwrites.edit(role, { SendMessages: false }));
@@ -92,9 +101,9 @@ client.on('messageCreate', async (message) => {
     message.reply(`${member.user.tag} est muté pour 1h.`);
     setTimeout(() => member.roles.remove(role), 3600000); // 1h en ms
   } else if (cmd === 'dmute') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     const member = message.mentions.members.first();
-    if (!member) return message.reply('Mentionne un utilisateur.');
+    if (!member) return sendErrorOnce('Mentionne un utilisateur.');
     const role = message.guild.roles.cache.find(r => r.name === 'muted');
     if (role) member.roles.remove(role);
     message.reply(`${member.user.tag} n'est plus muet.`);
@@ -102,21 +111,21 @@ client.on('messageCreate', async (message) => {
 
   // SNIPE
   else if (cmd === 'snipe') {
-    if (!snipe) return message.reply('Aucun message supprimé.');
+    if (!snipe) return sendErrorOnce('Aucun message supprimé.');
     message.channel.send(`Dernier message supprimé :\n**${snipe.author.tag}**: ${snipe.content}`);
   }
 
   // ANNONCE
   else if (cmd === 'annonce') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     const text = args.join(' ');
-    if (!text) return message.reply('Tu dois écrire un message.');
+    if (!text) return sendErrorOnce('Tu dois écrire un message.');
     message.channel.send(text);
   }
 
   // ROLE AJOUTER / ENLEVER
   else if (cmd === 'role' && args[0] === 'ajouter') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     const user = message.mentions.members.first();
     const roleName = args.slice(2).join(' ');
     const role = message.guild.roles.cache.find(r => r.name === roleName);
@@ -125,7 +134,7 @@ client.on('messageCreate', async (message) => {
       message.reply(`Rôle ${roleName} ajouté à ${user.user.tag}.`);
     }
   } else if (cmd === 'role' && args[0] === 'enlever') {
-    if (!isAdmin) return message.reply("Tu n'as pas la permission d'utiliser cette commande.");
+    if (!isAdmin) return sendErrorOnce("Tu n'as pas la permission d'utiliser cette commande.");
     const user = message.mentions.members.first();
     const roleName = args.slice(2).join(' ');
     const role = message.guild.roles.cache.find(r => r.name === roleName);

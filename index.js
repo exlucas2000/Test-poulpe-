@@ -14,7 +14,7 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-const PREFIX = '?';
+const PREFIX = '+';
 let snipe = null;
 let money = {};
 
